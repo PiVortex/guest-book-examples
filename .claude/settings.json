@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh pr comment:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git push --force-if-includes:*)",
+      "Bash(git push -f:*)",
+
+      "Bash(gh pr merge)",
+      "Bash(gh pr merge:*)",
+      "Bash(git merge)",
+      "Bash(git merge:*)",
+
+      "Bash(git push origin main)",
+      "Bash(git push origin main:*)",
+      "Bash(git push -u origin main)",
+      "Bash(git push -u origin main:*)",
+      "Bash(git push origin HEAD:main)",
+      "Bash(git push origin HEAD:main:*)",
+
+      "Bash(git push origin master)",
+      "Bash(git push origin master:*)",
+      "Bash(git push -u origin master)",
+      "Bash(git push -u origin master:*)",
+      "Bash(git push origin HEAD:master)",
+      "Bash(git push origin HEAD:master:*)"
+    ]
+  }
+}

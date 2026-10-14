@@ -77,7 +77,7 @@ mod tests {
         contract.add_message("A message".to_string());
 
         let posted_message = &contract.get_messages(None, None)[0];
-        assert_eq!(posted_message.premium, false);
+        assert!(!posted_message.premium);
         assert_eq!(posted_message.text, "A message".to_string());
     }
 
@@ -92,7 +92,7 @@ mod tests {
         assert!(*total == 3);
 
         let last_message = &contract.get_messages(Some(U64::from(1)), Some(U64::from(2)))[1];
-        assert_eq!(last_message.premium, false);
+        assert!(!last_message.premium);
         assert_eq!(last_message.text, "3rd message".to_string());
     }
 }
