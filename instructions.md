@@ -33,20 +33,9 @@ This repository was set up with automated code review, CI, and PR tooling. This 
 
 Do these once. They need your tokens, your GitHub permissions, or the GitHub settings UI — the setup can't do them for you. Work through them in order.
 
-## 1. Commit and push the setup
+## 1. Review and merge the setup PR
 
-> **This repo is a fork.** GitHub keeps Actions disabled on a fork until you opt in, so do **step 7.1 (enable Actions)** before pushing — otherwise this push won't run CI.
-
-The setup only changed your local working tree — nothing is committed yet. Review **every** generated file using the review table from the setup run, including the `.claude/commands/` files: they are installed from the framework with only their branch/allowlist placeholders filled, but they drive your PR automation and run with elevated tool permissions, so read them and confirm they do what you expect before trusting them. Then commit and push to `main` (directly or via a PR):
-
-```bash
-git status                 # review everything the setup added first
-git add contract-rs/src/lib.rs
-git commit -m "test(contract): use assert! for boolean checks"
-git add -A                 # picks up .github/, .claude/, CLAUDE.md, instructions.md, and the .gitignore change
-git commit -m "ci: add repo automation (CI, Claude review, dependabot, .claude commands)"
-git push
-```
+The setup is on the `setup/repo-automation` branch as [PR #1](https://github.com/PiVortex/guest-book-examples/pull/1). Review **every** file in it using the review table from the setup run, including the `.claude/commands/` files: they are installed from the framework with only their branch/allowlist placeholders filled, but they drive your PR automation and run with elevated tool permissions, so read them and confirm they do what you expect before trusting them. Then merge it into `main`.
 
 The workflows only start working once they are on the **default branch**.
 
@@ -108,27 +97,26 @@ On github.com: `PiVortex/guest-book-examples` → **Settings** → **Rules** →
 
 This repo is a fork of `near-examples/guest-book-examples`, which needs a few extra steps:
 
-1. **Enable GitHub Actions on the fork.** `PiVortex/guest-book-examples` → **Actions** tab → **I understand my workflows, go ahead and enable them**. Until you do, no workflow runs here — not CI, not `/claude-review`.
-2. **Disable the upstream DevRel hook.** `issue-transfer.yml` runs on every opened PR/issue (`pull_request_target`) and adds it to the `near` org's project #117 using a `PROJECT_GH_TOKEN` secret this fork doesn't have, so it fails on every PR. After step 7.1:
+1. **Disable the upstream DevRel hook.** `issue-transfer.yml` runs on every opened PR/issue (`pull_request_target`) and adds it to the `near` org's project #117 using a `PROJECT_GH_TOKEN` secret this fork doesn't have, so it fails on every PR — and that red check shows in `gh pr checks`, where the PR commands' CI-fix loop would try to "fix" it:
    ```bash
    gh workflow disable "Add to DevRel Project" -R PiVortex/guest-book-examples
    ```
    (Only if this fork really should feed that project: instead set `gh secret set PROJECT_GH_TOKEN -R PiVortex/guest-book-examples` to a PAT with access to the `near` org's project.)
-3. **GitHub Pages for the frontend (or disable the deploy).** `nextjs.yml` deploys `frontend/` to Pages (environment `github-pages`) on every push to `main` that touches `frontend/**`. Pages isn't enabled on this fork, so that job fails until you either enable it — **Settings → Pages → Source: GitHub Actions** (the production `basePath` `/guest-book-examples` already matches `https://pivortex.github.io/guest-book-examples/`) — or turn it off:
+2. **GitHub Pages for the frontend (or disable the deploy).** `nextjs.yml` deploys `frontend/` to Pages (environment `github-pages`) on every push to `main` that touches `frontend/**`. Pages isn't enabled on this fork, so that job fails until you either enable it — **Settings → Pages → Source: GitHub Actions** (the production `basePath` `/guest-book-examples` already matches `https://pivortex.github.io/guest-book-examples/`) — or turn it off:
    ```bash
    gh workflow disable "Deploy Next.js site to Pages" -R PiVortex/guest-book-examples
    ```
-4. **Pin `gh` to the fork in each clone.** In a fork, `gh` can resolve to the upstream `near-examples/guest-book-examples` (it asks interactively, and `gh pr create` offers upstream as the base). Run this once per clone so manual `gh` commands — and the PR commands' repo lookup — target the fork:
+3. **Pin `gh` to the fork in each clone.** In a fork, `gh` can resolve to the upstream `near-examples/guest-book-examples` (it asks interactively, and `gh pr create` offers upstream as the base). Run this once per clone so manual `gh` commands — and the PR commands' repo lookup — target the fork:
    ```bash
    gh repo set-default PiVortex/guest-book-examples
    ```
-5. **Issues (optional).** Issues are disabled on this repo, so `/fix-issue <number>` has nothing to fetch — use its free-text mode (`/fix-issue "describe the problem"`) or enable **Settings → General → Features → Issues**. `/claude-review` on PRs works either way.
+4. **Issues (optional).** Issues are disabled on this repo, so `/fix-issue <number>` has nothing to fetch — use its free-text mode (`/fix-issue "describe the problem"`) or enable **Settings → General → Features → Issues**. `/claude-review` on PRs works either way.
 
 ## 8. Smoke test
 
 Open a test PR:
 
-- As `PiVortex`, comment `/claude-review` — the workflow should add a 👀 reaction, then post one consolidated review comment. If it doesn't fire: confirm `claude-review.yml` is on `main`, Actions are enabled on the fork (step 7.1), the comment was posted by `PiVortex`, and `CLAUDE_CODE_OAUTH_TOKEN` exists (the Claude review token step above).
+- As `PiVortex`, comment `/claude-review` — the workflow should add a 👀 reaction, then post one consolidated review comment. If it doesn't fire: confirm `claude-review.yml` is on `main`, the comment was posted by `PiVortex`, and `CLAUDE_CODE_OAUTH_TOKEN` exists (the Claude review token step above).
 - Copilot review: request **Copilot** from the test PR's **Reviewers** panel (or let `/fix-issue` request it) and confirm it posts inline comments. If it doesn't appear: recheck Copilot code review is enabled and you have a seat + quota.
 
 ---
