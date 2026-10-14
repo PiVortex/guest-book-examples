@@ -1,0 +1,47 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    cooldown:
+      default-days: 10
+    groups:
+      patch:
+        patterns: ["*"]
+        update-types: ["patch"]
+      minor:
+        patterns: ["*"]
+        update-types: ["minor"]
+
+  - package-ecosystem: cargo
+    directory: /contract-rs
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      patch:
+        patterns: ["*"]
+        update-types: ["patch"]
+      minor:
+        patterns: ["*"]
+        update-types: ["minor"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      patch:
+        patterns: ["*"]
+        update-types: ["patch"]
+      minor:
+        patterns: ["*"]
+        update-types: ["minor"]

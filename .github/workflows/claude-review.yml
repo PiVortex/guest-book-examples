@@ -1,0 +1,191 @@
+name: Claude PR Assistant
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: claude-review-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  claude:
+    name: Claude Code Review
+    if: >-
+      github.repository == 'PiVortex/guest-book-examples' &&
+      github.event.comment.user.login == 'PiVortex' &&
+      github.event.comment.author_association == 'OWNER' &&
+      contains(github.event.comment.body, '/claude-review') &&
+      github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    env:
+      PR_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Check PR trust boundary
+        id: pr_metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          is_cross_repository="$(
+            gh pr view "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json isCrossRepository \
+              --jq .isCrossRepository
+          )"
+          echo "is_cross_repository=${is_cross_repository}" >> "$GITHUB_OUTPUT"
+          if [ "${is_cross_repository}" = "true" ]; then
+            echo "Skipping Claude review for forked pull request #${PR_NUMBER}."
+          fi
+
+      - name: Acknowledge the review request
+        if: steps.pr_metadata.outputs.is_cross_repository != 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        if: steps.pr_metadata.outputs.is_cross_repository != 'true'
+        with:
+          ref: refs/pull/${{ env.PR_NUMBER }}/merge
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run Claude Code review
+        if: steps.pr_metadata.outputs.is_cross_repository != 'true'
+        uses: anthropics/claude-code-action@fbda2eb1bdc90d319b8d853f5deb53bca199a7c1 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--model claude-opus-4-8 --effort xhigh --max-turns 50 --allowedTools 'Read,Glob,Grep,Agent,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(git blame:*),Bash(git log:*),Bash(git diff:*)'"
+          prompt: |
+            Code review pull request #${{ env.PR_NUMBER }}. Follow these steps precisely:
+
+            This repository is a NEAR Protocol example: a Guest Book smart contract in Rust
+            (`contract-rs/` — near-sdk 5, built with cargo-near, unit tests in `src/lib.rs` plus a
+            near-sandbox integration test in `tests/`) and a Next.js 16 static-export frontend in
+            JavaScript/React (`frontend/` — pnpm, near-api-js + @hot-labs/near-connect) that calls an
+            already-deployed testnet contract. It is teaching material linked from docs.near.org.
+            Apply the checks appropriate to the language of each changed file.
+
+            1. Find relevant CLAUDE.md files: the root CLAUDE.md and any CLAUDE.md files
+               in directories whose files this PR modifies. Use Glob to find them, then Read
+               to load their contents.
+
+            2. Get the PR diff with `gh pr diff ${{ env.PR_NUMBER }}` and summarize the change.
+               Also read the PR description (`gh pr view ${{ env.PR_NUMBER }} --json body`). If it
+               has a "Design decisions / accepted tradeoffs" section, every item there is OUT OF
+               SCOPE — do NOT raise it as a finding. (If an accepted tradeoff looks genuinely
+               dangerous rather than merely debatable, you may note it once as a design note — never
+               as a blocking defect.)
+
+            3. Launch 4 parallel agents to review the change independently. Each agent should
+               read the PR diff with `gh pr diff ${{ env.PR_NUMBER }}` and the full source files
+               for changed code, then return a list of issues. Each agent MUST score its own
+               findings inline using the severity and confidence rubric below.
+
+               Severity levels — each is either **blocking** or **non-blocking**; this is what
+               decides whether the review loop has to iterate again:
+               - CRITICAL (blocking): a contract change that lets a caller take or lock funds they
+                 shouldn't, panics or overflows on caller input, or breaks the deployed contract's
+                 state (changed `#[near(contract_state)]` layout, `Vector` storage prefix, or Borsh
+                 shape of `PostedMessage`) without a migration; a private key, seed phrase, or access
+                 key committed or logged; a frontend change that broadens the function-call access
+                 key (method names or allowance) or signs a transaction the user didn't intend.
+               - HIGH (blocking): logic bugs in deposit/premium handling or pagination (`from_index` /
+                 `limit` off-by-one, unchecked `u64`→`usize` casts); a contract method, argument, or
+                 JSON-shape change without matching updates to the frontend calls, the sandbox test,
+                 and the `contract-rs/README.md` snippets; missing error handling on wallet/RPC calls
+                 in the frontend; a change that breaks the static export the Pages deploy relies on.
+               - MEDIUM: missing tests, unnecessary complexity, performance issues — blocking only
+                 when it needs a concrete code change (an "actionable MEDIUM"); otherwise a design note.
+               - LOW (non-blocking): documentation gaps, naming suggestions.
+
+               Confidence scoring (0-100):
+               0: False positive, doesn't stand up to scrutiny, or pre-existing issue.
+               25: Might be real, but may be false positive. Stylistic issues not in CLAUDE.md.
+               50: Real issue but nitpick or rare in practice. Not very important.
+               75: Verified real issue, will be hit in practice. Directly impacts functionality
+                   or explicitly mentioned in CLAUDE.md.
+               100: Certain, confirmed, will happen frequently. Evidence directly confirms.
+
+               Each agent returns findings as: [SEVERITY:CONFIDENCE] <brief description>
+
+               Agent 1 — Security & Safety
+               Check for: Rust — `#[payable]` only where a deposit is intended and every attached
+               deposit accounted for; identity from `env::predecessor_account_id()`, not the signer;
+               no `unwrap`/panic or unchecked arithmetic on caller input (keep `overflow-checks = true`);
+               unbounded caller-controlled data written to storage (storage-staking drain) not made
+               worse; no keys outside sandbox-only test fixtures. JavaScript — the function-call access
+               key's `methodNames` / `allowance` never broadened; deposits converted with `nearToYocto`
+               (no float math on yoctoNEAR); user text rendered through React escaping (no
+               `dangerouslySetInnerHTML`); no secrets or private RPC credentials committed; contract id
+               and RPC endpoints only from `src/config.js` / `near-provider.jsx`.
+
+               Agent 2 — Architecture & Patterns
+               Check for: the contract interface (method names, argument names, U64-as-string
+               types, `PostedMessage` JSON shape) staying in sync across `contract-rs/src/lib.rs`,
+               `contract-rs/tests/test_basics.rs`, the `contract-rs/README.md` snippets, and the calls
+               in `frontend/src/pages/index.js`; state layout and the `b"m"` storage prefix unchanged
+               unless a migration is included; near-sdk 5 idioms (`#[near]`, `near_sdk::store`
+               collections, `NearToken`); wallet access going through the `useNearWallet` context rather
+               than new ad-hoc connectors; `next.config.js` staying a static export (`output: "export"`,
+               `distDir: 'build'`, production `basePath`) that matches the Pages deploy; example code
+               kept minimal and idiomatic — this repo is teaching material.
+
+               Agent 3 — Bug Scan
+               Shallow diff-only scan for obvious bugs: logic errors, off-by-one,
+               missing error handling, incorrect return values, division by zero.
+               Ignore nitpicks and likely false positives.
+
+               Agent 4 — Performance & Production
+               Check for: Rust — gas and storage cost of contract methods: view iteration bounded
+               by `limit`, no full-collection loads or clones of large state, `near_sdk::store`
+               collections rather than in-memory state; release-profile settings (`opt-level = "z"`,
+               `lto`, `overflow-checks`, `panic = "abort"`) preserved. JavaScript — no redundant RPC
+               calls or polling loops; effects with correct dependency arrays and cleanup (wallet
+               listeners removed); optimistic UI rolled back on failure; no heavy new dependencies
+               for small features.
+
+            4. Consolidate all agent findings, drop anything covered by the PR's accepted-tradeoffs
+               section, and split what remains into two buckets: **blocking defects** (CRITICAL,
+               HIGH, actionable MEDIUM) and **design notes** (LOW, nits, debatable tradeoffs). The
+               "Found N" count is the number of BLOCKING defects ONLY — design notes are listed but
+               never counted, so a PR with only design notes left is done, not "looping." Post
+               exactly one comment on PR #${{ env.PR_NUMBER }} using `gh pr comment ${{ env.PR_NUMBER }}`,
+               in the format below (omit the Design notes section when there are none):
+
+            ### Code review
+
+            Found N blocking issues:
+
+            **Blocking** (must be addressed before merge):
+            1. [SEVERITY:CONFIDENCE] <brief description>
+
+            <permalink to file:line using full SHA, eg https://github.com/owner/repo/blob/abc123def/contract-rs/src/lib.rs#L10-L15>
+
+            **Design notes** (non-blocking — LOW / accepted tradeoffs; no action required, and not re-raised once the author accepts them):
+            - [SEVERITY:CONFIDENCE] <brief description>
+
+            IMPORTANT rules:
+            - Only YOU (the main process) may call `gh pr comment`. Agents must return
+              their findings to you; they must NOT post comments themselves.
+            - You MUST post exactly one `gh pr comment` before finishing, even if agents
+              fail or return empty results. If there are no blocking defects, still post the
+              "### Code review" comment with "Found 0 blocking issues" (plus any design notes).
+            - Use Read/Glob for file access and `gh` for GitHub interactions.
+            - Do NOT build or test the code.
+            - Ignore pre-existing issues not introduced by this PR.
+            - Ignore issues a linter/compiler would catch.
+            - Never re-raise anything listed in the PR's "Design decisions / accepted tradeoffs"
+              section — those are settled. Keep blocking defects and design notes in separate
+              buckets so the author only has to iterate on the blocking ones.
